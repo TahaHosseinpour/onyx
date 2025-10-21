@@ -11,6 +11,7 @@ import LLMPopover from "@/refresh-components/popovers/LLMPopover";
 import { InputPrompt } from "@/app/chat/interfaces";
 import { FilterManager, LlmManager, useFederatedConnectors } from "@/lib/hooks";
 import { useChatContext } from "@/refresh-components/contexts/ChatContext";
+import { useLLMProviders } from "@/lib/hooks/useLLMProviders";
 import { DocumentIcon2, FileIcon } from "@/components/icons/icons";
 import { OnyxDocument, MinimalOnyxDocument } from "@/lib/search/interfaces";
 import { ChatState } from "@/app/chat/interfaces";
@@ -583,6 +584,7 @@ function ChatInputBarInner({
               <LLMPopover
                 llmManager={llmManager}
                 requiresImageGeneration={false}
+                llmProviders={llmProviders}
               />
             </div>
             <IconButton

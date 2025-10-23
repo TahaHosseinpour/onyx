@@ -12,6 +12,8 @@ from litellm.types.utils import Function as LiteLLMFunction
 from onyx.configs.app_configs import MOCK_LLM_RESPONSE
 from onyx.llm.chat_llm import DefaultMultiLLM
 from onyx.llm.utils import get_max_input_tokens
+from onyx.tracing import braintrust_tracing
+from shared_configs.contextvars import CURRENT_TENANT_ID_CONTEXTVAR
 
 
 def _create_delta(
@@ -155,6 +157,50 @@ def test_multiple_tool_calls(default_multi_llm: DefaultMultiLLM) -> None:
             mock_response=MOCK_LLM_RESPONSE,
         )
 
+
+def test_braintrust_usage_logged_with_tenant(default_multi_llm: DefaultMultiLLM) -> None:
+    class StubBTLogger:
+        def __init__(self) -> None:
+            self.calls: list[tuple[str, dict]] = []
+
+        def log(self, event_name: str, data: dict | None = None, **_: object) -> None:
+            self.calls.append((event_name, data or {}))
+
+    stub_logger = StubBTLogger()
+
+    # Set tenant context
+    CURRENT_TENANT_ID_CONTEXTVAR.set("test_tenant")
+
+    # Install stub Braintrust logger
+    braintrust_tracing.BRAINTRUST_LOGGER = stub_logger
+
+    with patch("litellm.completion") as mock_completion:
+        mock_response = litellm.ModelResponse(
+            id="chatcmpl-usage",
+            choices=[
+                litellm.Choices(
+                    finish_reason="stop",
+                    index=0,
+                    message=litellm.Message(content="hi", role="assistant"),
+                )
+            ],
+            model="gpt-3.5-turbo",
+            usage=litellm.Usage(prompt_tokens=7, completion_tokens=3, total_tokens=10),
+        )
+        mock_completion.return_value = mock_response
+
+        # Invoke
+        messages = [HumanMessage(content="hello")] 
+        _ = default_multi_llm.invoke(messages)
+
+        # Assert Braintrust logger received usage with tenant context
+        assert len(stub_logger.calls) >= 1
+        event_name, data = stub_logger.calls[-1]
+        assert event_name == "llm_usage"
+        assert data.get("tenant_id") == "test_tenant"
+        assert data.get("prompt_tokens") == 7
+        assert data.get("completion_tokens") == 3
+        assert data.get("total_tokens") == 10
 
 def test_multiple_tool_calls_streaming(default_multi_llm: DefaultMultiLLM) -> None:
     # Mock the litellm.completion function

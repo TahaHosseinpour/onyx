@@ -44,7 +44,7 @@ from onyx.llm.utils import check_number_of_tokens
 from onyx.llm.utils import model_is_reasoning_model
 from onyx.natural_language_processing.utils import get_tokenizer
 from onyx.server.utils import mask_string
-from onyx.tracing.braintrust_tracing import log_braintrust_usage
+from onyx.tracing.braintrust_tracing import braintrust_log
 from onyx.utils.logger import setup_logger
 from onyx.utils.long_term_log import LongTermLogger
 
@@ -522,7 +522,7 @@ class DefaultMultiLLM(LLM):
         try:
             usage = getattr(response, "usage", None)
             if usage is not None:
-                log_braintrust_usage(
+                braintrust_log(
                     "llm_usage",
                     {
                         "model_provider": self.config.model_provider,
@@ -665,7 +665,7 @@ class DefaultMultiLLM(LLM):
                 )
 
             total_tokens_est = prompt_tokens_est + completion_tokens_est
-            log_braintrust_usage(
+            braintrust_log(
                 "llm_usage",
                 {
                     "model_provider": self.config.model_provider,

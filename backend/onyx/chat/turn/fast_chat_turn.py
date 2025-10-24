@@ -34,9 +34,15 @@ from onyx.server.query_and_chat.streaming_models import OverallStop
 from onyx.server.query_and_chat.streaming_models import Packet
 from onyx.server.query_and_chat.streaming_models import PacketObj
 from onyx.server.query_and_chat.streaming_models import SectionEnd
+from onyx.utils.logger import setup_logger
+from shared_configs.contextvars import CURRENT_TENANT_ID_CONTEXTVAR
+
 
 if TYPE_CHECKING:
     from litellm import ResponseFunctionToolCall
+
+
+logger = setup_logger()
 
 
 def _remove_last_task_prompt_and_insert_new_one(
@@ -136,6 +142,10 @@ def _fast_chat_turn_core(
         message_id=message_id,
         research_type=research_type,
     )
+    logger.info(
+        f"Fast chat turn started for tenant: {CURRENT_TENANT_ID_CONTEXTVAR.get()}"
+    )
+    # with trace("fast_chat_turn", metadata={"tenant_id": CURRENT_TENANT_ID_CONTEXTVAR.get()}):
     with trace("fast_chat_turn"):
         _run_agent_loop(
             messages=messages,

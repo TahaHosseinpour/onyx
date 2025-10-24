@@ -103,7 +103,7 @@ def _with_context(metadata: Dict[str, Any]) -> Dict[str, Any]:
     return enriched
 
 
-def log_braintrust_usage(event_name: str, metadata: Dict[str, Any]) -> None:
+def braintrust_log(event_name: str, metadata: Dict[str, Any]) -> None:
     """Log a lightweight usage event to Braintrust if configured.
 
     No-ops safely if Braintrust is not initialized. Exceptions are swallowed to
@@ -113,56 +113,9 @@ def log_braintrust_usage(event_name: str, metadata: Dict[str, Any]) -> None:
         if not BRAINTRUST_LOGGER:
             return
 
-        # Some Braintrust logger implementations expose `.log(name, data=...)`
-        # Fallbacks are ignored to stay safe in various environments.
         payload = _with_context(metadata)
-        # If spans are enabled, prefer span-based logging
-        if hasattr(BRAINTRUST_LOGGER, "start_span"):
-            span = None
-            try:
-                # type: ignore[attr-defined]
-                span = BRAINTRUST_LOGGER.start_span(
-                    event_name, metadata=payload
-                )  # pyright: ignore
-            except TypeError:
-                try:
-                    # Fallback: start span without metadata, log metadata below
-                    span = BRAINTRUST_LOGGER.start_span(event_name)
-                except Exception:
-                    span = None
-
-            if span is not None:
-                try:
-                    # Prefer single-arg payload; fallback to (event, payload)
-                    if hasattr(span, "log"):
-                        try:
-                            span.log(payload)
-                        except TypeError:
-                            try:
-                                span.log("usage", payload)
-                            except Exception:
-                                pass
-                finally:
-                    try:
-                        if hasattr(span, "end"):
-                            span.end()
-                        elif hasattr(span, "finish"):
-                            span.finish()
-                    except Exception:
-                        pass
-                return
-
-        # Fallback to toplevel log if spans are not available
-        if hasattr(BRAINTRUST_LOGGER, "log"):
-            try:
-                BRAINTRUST_LOGGER.log(event_name, payload)
-            except TypeError:
-                try:
-                    BRAINTRUST_LOGGER.log(event_name, **payload)
-                except Exception:
-                    pass
-        else:
-            logger.debug("Braintrust logger has no .log method; skipping usage event")
+        with BRAINTRUST_LOGGER.start_span(event_name, metadata=payload) as span:
+            span.log(**payload)
     except Exception:
         # Swallow errors; tracing must never break application flow
         pass

@@ -25,7 +25,13 @@ import { cn } from "@/lib/utils";
 import { useModalContext } from "@/components/context/ModalContext";
 import SidebarTab from "@/refresh-components/buttons/SidebarTab";
 
-function getUsernameFromEmail(email?: string): string {
+function getDisplayName(email?: string, personalName?: string): string {
+  // Prioritize custom personal name if set
+  if (personalName && personalName.trim()) {
+    return personalName.trim();
+  }
+
+  // Fallback to email-derived username
   if (!email) return ANONYMOUS_USER_NAME;
   const atIndex = email.indexOf("@");
   if (atIndex <= 0) return ANONYMOUS_USER_NAME;
@@ -129,7 +135,7 @@ function NotificationsPopover({ onClose }: NotificationsPopoverProps) {
 
   return (
     <div className="w-[20rem] h-[30rem] flex flex-col">
-      <div className="flex flex-row justify-between items-center p-spacing-paragraph">
+      <div className="flex flex-row justify-between items-center p-4">
         <Text headingH2>Notifications</Text>
         <SvgX
           className="stroke-text-05 w-[1.2rem] h-[1.2rem] hover:stroke-text-04 cursor-pointer"
@@ -137,13 +143,13 @@ function NotificationsPopover({ onClose }: NotificationsPopoverProps) {
         />
       </div>
 
-      <div className="flex-1 overflow-y-auto overflow-x-hidden p-spacing-paragraph flex flex-col gap-spacing-interline items-center">
+      <div className="flex-1 overflow-y-auto overflow-x-hidden p-4 flex flex-col gap-2 items-center">
         {!notifications || notifications.length === 0 ? (
           <div className="w-full h-full flex flex-col justify-center items-center">
             <Text>No notifications</Text>
           </div>
         ) : (
-          <div className="w-full flex flex-col gap-spacing-interline">
+          <div className="w-full flex flex-col gap-2">
             {notifications?.map((notification, index) => (
               <Text key={index}>{notification.notif_type}</Text>
             ))}
@@ -165,7 +171,7 @@ export default function Settings({ folded }: SettingsProps) {
   const { user } = useUser();
   const { setShowUserSettingsModal } = useModalContext();
 
-  const username = getUsernameFromEmail(user?.email);
+  const displayName = getDisplayName(user?.email, user?.personalization?.name);
 
   return (
     <Popover
@@ -186,14 +192,14 @@ export default function Settings({ folded }: SettingsProps) {
                 )}
               >
                 <Text inverted secondaryBody>
-                  {username[0]?.toUpperCase()}
+                  {displayName[0]?.toUpperCase()}
                 </Text>
               </Avatar>
             )}
             active={!!popupState}
             folded={folded}
           >
-            {username}
+            {displayName}
           </SidebarTab>
         </div>
       </PopoverTrigger>

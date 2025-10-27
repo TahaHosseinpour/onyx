@@ -79,12 +79,12 @@ import {
   TrashIcon,
 } from "@/components/icons/icons";
 import { buildImgUrl } from "@/app/chat/components/files/images/utils";
-import { debounce, values } from "lodash";
+import { debounce } from "lodash";
 import { LLMProviderView } from "@/app/admin/configuration/llm/interfaces";
 import StarterMessagesList from "@/app/admin/assistants/StarterMessageList";
 
 import { SwitchField } from "@/components/ui/switch";
-import { generateIdenticon } from "@/components/assistants/AssistantIcon";
+import { generateIdenticon } from "@/refresh-components/AgentIcon";
 import { BackButton } from "@/components/BackButton";
 import { AdvancedOptionsToggle } from "@/components/AdvancedOptionsToggle";
 import { MinimalUserSnapshot } from "@/lib/types";
@@ -114,11 +114,9 @@ import { MAX_CHARACTERS_PERSONA_DESCRIPTION } from "@/lib/constants";
 import { FormErrorFocus } from "@/components/FormErrorHelpers";
 import { ProjectFile } from "@/app/chat/projects/projectsService";
 import { useProjectsContext } from "@/app/chat/projects/ProjectsContext";
-import FilePicker from "@/app/chat/components/files/FilePicker";
+import FilePickerPopover from "@/refresh-components/popovers/FilePickerPopover";
 import SvgTrash from "@/icons/trash";
 import SvgEditBig from "@/icons/edit-big";
-import LineItem from "@/refresh-components/buttons/LineItem";
-import SvgPlusCircle from "@/icons/plus-circle";
 import SvgFiles from "@/icons/files";
 import { useAgentsContext } from "@/refresh-components/contexts/AgentsContext";
 import Text from "@/refresh-components/texts/Text";
@@ -989,69 +987,75 @@ export function AssistantEditor({
 
                 <div className="w-full max-w-4xl">
                   <div className="flex flex-col">
-                    {searchTool && (
-                      <>
-                        <Separator />
-                        <div className="flex gap-x-2 py-2 flex justify-start">
-                          <div>
-                            <div className="flex items-start gap-x-2">
-                              <p className="block font-medium text-sm">
-                                Knowledge
-                              </p>
-                              <div className="flex items-center">
-                                <TooltipProvider>
-                                  <Tooltip>
-                                    <TooltipTrigger asChild>
-                                      <div
-                                        className={`${
-                                          !connectorsExist
-                                            ? "opacity-70 cursor-not-allowed"
-                                            : ""
+                    <>
+                      <Separator />
+                      <div className="flex gap-x-2 py-2 flex justify-start">
+                        <div>
+                          <div className="flex items-start gap-x-2">
+                            <p className="block font-medium text-sm">
+                              Knowledge
+                            </p>
+                            <div className="flex items-center">
+                              <TooltipProvider>
+                                <Tooltip>
+                                  <TooltipTrigger asChild>
+                                    <div
+                                      className={`${
+                                        !connectorsExist || !searchTool
+                                          ? "opacity-70 cursor-not-allowed"
+                                          : ""
+                                      }`}
+                                    >
+                                      <FastField
+                                        name={`enabled_tools_map.${
+                                          // -1 is a placeholder -- this section
+                                          // should be disabled anyways if no search tool
+                                          searchTool?.id || -1
                                         }`}
                                       >
-                                        <FastField
-                                          name={`enabled_tools_map.${searchTool.id}`}
-                                        >
-                                          {({ form }: any) => (
-                                            <SwitchField
-                                              size="sm"
-                                              onCheckedChange={(
-                                                checked: boolean
-                                              ) => {
-                                                form.setFieldValue(
-                                                  "num_chunks",
-                                                  null
-                                                );
-                                                toggleToolInValues(
-                                                  searchTool.id
-                                                );
-                                              }}
-                                              name={`enabled_tools_map.${searchTool.id}`}
-                                              disabled={!connectorsExist}
-                                            />
-                                          )}
-                                        </FastField>
-                                      </div>
-                                    </TooltipTrigger>
+                                        {({ form }: any) => (
+                                          <SwitchField
+                                            size="sm"
+                                            onCheckedChange={(
+                                              checked: boolean
+                                            ) => {
+                                              form.setFieldValue(
+                                                "num_chunks",
+                                                null
+                                              );
+                                              toggleToolInValues(
+                                                searchTool?.id || -1
+                                              );
+                                            }}
+                                            name={`enabled_tools_map.${
+                                              searchTool?.id || -1
+                                            }`}
+                                            disabled={
+                                              !connectorsExist || !searchTool
+                                            }
+                                          />
+                                        )}
+                                      </FastField>
+                                    </div>
+                                  </TooltipTrigger>
 
-                                    {!connectorsExist && (
-                                      <TooltipContent side="top" align="center">
-                                        <Text inverted>
-                                          To use Knowledge, you need to have at
-                                          least one Connector configured. You
-                                          can still upload user files to the
-                                          agent below.
-                                        </Text>
-                                      </TooltipContent>
-                                    )}
-                                  </Tooltip>
-                                </TooltipProvider>
-                              </div>
+                                  {!connectorsExist && (
+                                    <TooltipContent side="top" align="center">
+                                      <Text inverted>
+                                        To use Knowledge, you need to have at
+                                        least one Connector configured. You can
+                                        still upload user files to the agent
+                                        below.
+                                      </Text>
+                                    </TooltipContent>
+                                  )}
+                                </Tooltip>
+                              </TooltipProvider>
                             </div>
                           </div>
                         </div>
-                      </>
-                    )}
+                      </div>
+                    </>
 
                     {((searchTool && values.enabled_tools_map[searchTool.id]) ||
                       !connectorsExist) && (
@@ -1113,7 +1117,7 @@ export function AssistantEditor({
                             <div className="text-sm flex flex-col items-start">
                               <SubLabel>Click below to add files</SubLabel>
                               {values.user_file_ids.length > 0 && (
-                                <div className="flex gap-spacing-inline">
+                                <div className="flex gap-1">
                                   {values.user_file_ids
                                     .slice(0, 4)
                                     .map((userFileId: string) => {
@@ -1165,11 +1169,12 @@ export function AssistantEditor({
                                   )}
                                 </div>
                               )}
-                              <FilePicker
-                                trigger={
-                                  <CreateButton>Add User Files</CreateButton>
-                                }
-                                recentFiles={allRecentFiles}
+                              <FilePickerPopover
+                                trigger={(open) => (
+                                  <CreateButton active={open}>
+                                    Add User Files
+                                  </CreateButton>
+                                )}
                                 onFileClick={(file: ProjectFile) => {
                                   setPresentingDocument({
                                     document_id: `project_file__${file.file_id}`,
@@ -1938,8 +1943,7 @@ export function AssistantEditor({
                         );
                       }
                     )}
-                    showRemove
-                    onRemove={(file) => {
+                    onDelete={(file) => {
                       setFieldValue(
                         "user_file_ids",
                         values.user_file_ids.filter(

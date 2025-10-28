@@ -1,7 +1,9 @@
-import { FormikProps } from "formik";
-import { Label } from "@/components/Field";
+import { FormikProps, ErrorMessage } from "formik";
 import Text from "@/refresh-components/texts/Text";
+import IconButton from "@/refresh-components/buttons/IconButton";
 import { SearchMultiSelectDropdown } from "@/components/Dropdown";
+import { cn } from "@/lib/utils";
+import SvgX from "@/icons/x";
 
 export type GenericMultiSelectFormType<T extends string> = {
   [K in T]: number[];
@@ -24,6 +26,8 @@ interface GenericMultiSelectProps<
   isLoading: boolean;
   error: any;
   emptyMessage: string;
+  disabled?: boolean;
+  disabledMessage?: string;
 }
 
 export function GenericMultiSelect<
@@ -38,21 +42,23 @@ export function GenericMultiSelect<
   isLoading,
   error,
   emptyMessage,
+  disabled = false,
+  disabledMessage,
 }: GenericMultiSelectProps<T, F>) {
   if (isLoading) {
     return (
-      <div className="mb-4">
-        <Label>{label}</Label>
-        <div className="animate-pulse bg-background-200 h-10 w-full rounded-lg mt-2"></div>
+      <div className="flex flex-col gap-2 w-full">
+        <Text mainUiAction>{label}</Text>
+        <div className="animate-pulse bg-background-neutral-02 h-10 w-full rounded-08" />
       </div>
     );
   }
 
   if (error) {
     return (
-      <div className="mb-4">
-        <Label>{label}</Label>
-        <Text className="text-sm text-error mt-2">
+      <div className="flex flex-col gap-2 w-full">
+        <Text mainUiAction>{label}</Text>
+        <Text text03 className="text-action-danger-05">
           Failed to load {label.toLowerCase()}. Please try again.
         </Text>
       </div>
@@ -61,9 +67,9 @@ export function GenericMultiSelect<
 
   if (!items || items.length === 0) {
     return (
-      <div className="mb-4">
-        <Label>{label}</Label>
-        <Text className="text-sm text-text-subtle mt-2">{emptyMessage}</Text>
+      <div className="flex flex-col gap-2 w-full">
+        <Text mainUiAction>{label}</Text>
+        <Text text03>{emptyMessage}</Text>
       </div>
     );
   }
@@ -71,14 +77,20 @@ export function GenericMultiSelect<
   const selectedIds = (formikProps.values[fieldName] as number[]) || [];
   const selectedItems = items.filter((item) => selectedIds.includes(item.id));
 
-  const handleSelect = (option: { name: string; value: number }) => {
+  const handleSelect = (option: { name: string; value: string | number }) => {
+    if (disabled) return;
     const currentIds = (formikProps.values[fieldName] as number[]) || [];
-    if (!currentIds.includes(option.value)) {
-      formikProps.setFieldValue(fieldName, [...currentIds, option.value]);
+    const numValue =
+      typeof option.value === "string"
+        ? parseInt(option.value, 10)
+        : option.value;
+    if (!currentIds.includes(numValue)) {
+      formikProps.setFieldValue(fieldName, [...currentIds, numValue]);
     }
   };
 
   const handleRemove = (itemId: number) => {
+    if (disabled) return;
     const currentIds = (formikProps.values[fieldName] as number[]) || [];
     formikProps.setFieldValue(
       fieldName,
@@ -87,41 +99,54 @@ export function GenericMultiSelect<
   };
 
   return (
-    <div className="mb-4">
-      <Label className="mb-2">{label}</Label>
-      {subtext && (
-        <Text className="text-sm text-text-subtle mb-3">{subtext}</Text>
-      )}
+    <div className="flex flex-col gap-2 w-full">
+      <Text mainUiAction>{label}</Text>
 
-      <SearchMultiSelectDropdown
-        options={items
-          .filter((item) => !selectedIds.includes(item.id))
-          .map((item) => ({
-            name: item.name,
-            value: item.id,
-          }))}
-        onSelect={handleSelect}
-      />
+      {subtext && <Text text03>{disabled ? disabledMessage : subtext}</Text>}
+
+      <div className={cn(disabled && "opacity-50 pointer-events-none")}>
+        <SearchMultiSelectDropdown
+          options={items
+            .filter((item) => !selectedIds.includes(item.id))
+            .map((item) => ({
+              name: item.name,
+              value: item.id,
+            }))}
+          onSelect={handleSelect}
+        />
+      </div>
 
       {selectedItems.length > 0 && (
-        <div className="flex flex-wrap gap-2 mt-3">
+        <div className="flex flex-wrap gap-2">
           {selectedItems.map((item) => (
             <div
               key={item.id}
-              className="flex items-center gap-2 px-3 py-1.5 bg-background-125 border border-border rounded-md"
+              className={cn(
+                "flex items-center gap-2 p-2 bg-background-tint-01 border rounded-08",
+                disabled && "opacity-50"
+              )}
             >
-              <span className="text-sm">{item.name}</span>
-              <button
-                type="button"
-                onClick={() => handleRemove(item.id)}
-                className="text-text-500 hover:text-error transition-colors"
-              >
-                ×
-              </button>
+              <Text mainUiBody>{item.name}</Text>
+              {!disabled && (
+                <IconButton
+                  tertiary
+                  icon={SvgX}
+                  onClick={() => handleRemove(item.id)}
+                  tooltip="Remove"
+                />
+              )}
             </div>
           ))}
         </div>
       )}
+
+      <ErrorMessage name={fieldName} component="div">
+        {(msg) => (
+          <Text text03 className="text-action-danger-05">
+            {msg}
+          </Text>
+        )}
+      </ErrorMessage>
     </div>
   );
 }

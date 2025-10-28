@@ -2742,6 +2742,10 @@ class Persona(Base):
     )
     # EE only
     is_public: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    # When True, this persona will not see public LLM providers (only explicitly assigned ones)
+    exclude_public_providers: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False
+    )
     groups: Mapped[list["UserGroup"]] = relationship(
         "UserGroup",
         secondary="persona__user_group",
@@ -3074,14 +3078,19 @@ class Persona__UserGroup(Base):
 
 
 class LLMProvider__Persona(Base):
-    """Association table restricting LLM providers to specific personas."""
+    """Association table restricting LLM providers to specific personas.
+
+    If no such rows exist for a given LLM provider, then it is accessible by all personas.
+    """
 
     __tablename__ = "llm_provider__persona"
 
     llm_provider_id: Mapped[int] = mapped_column(
-        ForeignKey("llm_provider.id"), primary_key=True
+        ForeignKey("llm_provider.id", ondelete="CASCADE"), primary_key=True
     )
-    persona_id: Mapped[int] = mapped_column(ForeignKey("persona.id"), primary_key=True)
+    persona_id: Mapped[int] = mapped_column(
+        ForeignKey("persona.id", ondelete="CASCADE"), primary_key=True
+    )
 
 
 class LLMProvider__UserGroup(Base):

@@ -1,7 +1,7 @@
 """add llm provider persona restrictions
 
 Revision ID: a4f23d6b71c8
-Revises: c8a93a2af083
+Revises: 09995b8811eb
 Create Date: 2025-10-21 00:00:00.000000
 
 """
@@ -12,7 +12,7 @@ import sqlalchemy as sa
 
 # revision identifiers, used by Alembic.
 revision = "a4f23d6b71c8"
-down_revision = "c8a93a2af083"
+down_revision = "09995b8811eb"
 branch_labels = None
 depends_on = None
 
@@ -22,8 +22,10 @@ def upgrade() -> None:
         "llm_provider__persona",
         sa.Column("llm_provider_id", sa.Integer(), nullable=False),
         sa.Column("persona_id", sa.Integer(), nullable=False),
-        sa.ForeignKeyConstraint(["llm_provider_id"], ["llm_provider.id"]),
-        sa.ForeignKeyConstraint(["persona_id"], ["persona.id"]),
+        sa.ForeignKeyConstraint(
+            ["llm_provider_id"], ["llm_provider.id"], ondelete="CASCADE"
+        ),
+        sa.ForeignKeyConstraint(["persona_id"], ["persona.id"], ondelete="CASCADE"),
         sa.PrimaryKeyConstraint("llm_provider_id", "persona_id"),
     )
     op.create_index(
@@ -42,8 +44,22 @@ def upgrade() -> None:
         ["persona_id", "llm_provider_id"],
     )
 
+    # Add exclude_public_providers column to persona table
+    op.add_column(
+        "persona",
+        sa.Column(
+            "exclude_public_providers",
+            sa.Boolean(),
+            nullable=False,
+            server_default=sa.false(),
+        ),
+    )
+
 
 def downgrade() -> None:
+    # Drop exclude_public_providers column from persona table
+    op.drop_column("persona", "exclude_public_providers")
+
     op.drop_index(
         "ix_llm_provider__persona_composite",
         table_name="llm_provider__persona",

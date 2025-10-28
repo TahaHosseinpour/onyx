@@ -207,19 +207,6 @@ class VisionProviderResponse(LLMProviderView):
     vision_models: list[str]
 
 
-class LLMProviderUsagePersona(BaseModel):
-    id: int
-    name: str
-
-
-class LLMProviderUsageResponse(BaseModel):
-    personas: list[LLMProviderUsagePersona]
-
-
-class GrantProviderAccessRequest(BaseModel):
-    provider_id: int
-
-
 class LLMCost(BaseModel):
     provider: str
     model_name: str

@@ -12,12 +12,16 @@ interface GroupsMultiSelectProps<T extends GroupsMultiSelectFormType> {
   formikProps: FormikProps<T>;
   label?: string;
   subtext?: string;
+  disabled?: boolean;
+  disabledMessage?: string;
 }
 
 export function GroupsMultiSelect<T extends GroupsMultiSelectFormType>({
   formikProps,
   label = "User Groups",
   subtext = "Select which user groups can access this resource",
+  disabled = false,
+  disabledMessage,
 }: GroupsMultiSelectProps<T>) {
   const {
     data: userGroups,
@@ -50,6 +54,8 @@ export function GroupsMultiSelect<T extends GroupsMultiSelectFormType>({
       isLoading={false}
       error={error}
       emptyMessage="No user groups available. Please create a user group first."
+      disabled={disabled}
+      disabledMessage={disabledMessage}
     />
   );
 }

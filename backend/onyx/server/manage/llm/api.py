@@ -13,8 +13,6 @@ from fastapi import Depends
 from fastapi import HTTPException
 from fastapi import Query
 from pydantic import ValidationError
-from sqlalchemy import select
-from sqlalchemy.orm import selectinload
 from sqlalchemy.orm import Session
 
 from onyx.auth.users import current_admin_user
@@ -24,16 +22,16 @@ from onyx.db.engine.sql_engine import get_session
 from onyx.db.llm import can_user_access_llm_provider
 from onyx.db.llm import fetch_existing_llm_provider
 from onyx.db.llm import fetch_existing_llm_providers
-from onyx.db.llm import llm_provider_is_public
+from onyx.db.llm import fetch_persona_with_groups
+from onyx.db.llm import fetch_user_group_ids
 from onyx.db.llm import remove_llm_provider
 from onyx.db.llm import update_default_provider
 from onyx.db.llm import update_default_vision_provider
-from onyx.db.llm import update_llm_provider_persona_relationships__no_commit
 from onyx.db.llm import upsert_llm_provider
+from onyx.db.llm import validate_persona_ids_exist
 from onyx.db.models import LLMProvider as LLMProviderModel
-from onyx.db.models import Persona
 from onyx.db.models import User
-from onyx.db.models import User__UserGroup
+from onyx.db.persona import user_can_access_persona
 from onyx.llm.factory import get_default_llms
 from onyx.llm.factory import get_llm
 from onyx.llm.factory import get_max_input_tokens_from_llm_provider
@@ -45,12 +43,9 @@ from onyx.llm.utils import litellm_exception_to_error_msg
 from onyx.llm.utils import model_supports_image_input
 from onyx.llm.utils import test_llm
 from onyx.server.manage.llm.models import BedrockModelsRequest
-from onyx.server.manage.llm.models import GrantProviderAccessRequest
 from onyx.server.manage.llm.models import LLMCost
 from onyx.server.manage.llm.models import LLMProviderDescriptor
 from onyx.server.manage.llm.models import LLMProviderUpsertRequest
-from onyx.server.manage.llm.models import LLMProviderUsagePersona
-from onyx.server.manage.llm.models import LLMProviderUsageResponse
 from onyx.server.manage.llm.models import LLMProviderView
 from onyx.server.manage.llm.models import ModelConfigurationUpsertRequest
 from onyx.server.manage.llm.models import OllamaFinalModelResponse
@@ -150,7 +145,7 @@ def test_llm_configuration(
         client_error_msg = litellm_exception_to_error_msg(
             error, llm, fallback_to_error_msg=True
         )
-        raise HTTPException(status_code=400, detail={"message": client_error_msg})
+        raise HTTPException(status_code=400, detail=client_error_msg)
 
 
 @admin_router.post("/test/default")
@@ -161,9 +156,7 @@ def test_default_provider(
         llm, fast_llm = get_default_llms()
     except ValueError:
         logger.exception("Failed to fetch default LLM Provider")
-        raise HTTPException(
-            status_code=400, detail={"message": "No LLM Provider setup"}
-        )
+        raise HTTPException(status_code=400, detail="No LLM Provider setup")
 
     functions_with_args: list[tuple[Callable, tuple]] = [
         (test_llm, (llm,)),
@@ -176,7 +169,7 @@ def test_default_provider(
         parallel_results[1] if len(parallel_results) > 1 else None
     )
     if error:
-        raise HTTPException(status_code=400, detail={"message": str(error)})
+        raise HTTPException(status_code=400, detail=str(error))
 
 
 @admin_router.get("/provider")
@@ -226,32 +219,23 @@ def put_llm_provider(
     if existing_provider and is_creation:
         raise HTTPException(
             status_code=400,
-            detail={
-                "message": f"LLM Provider with name {llm_provider_upsert_request.name} already exists"
-            },
+            detail=f"LLM Provider with name {llm_provider_upsert_request.name} already exists",
         )
     elif not existing_provider and not is_creation:
         raise HTTPException(
             status_code=400,
-            detail={
-                "message": f"LLM Provider with name {llm_provider_upsert_request.name} does not exist"
-            },
+            detail=f"LLM Provider with name {llm_provider_upsert_request.name} does not exist",
         )
 
     persona_ids = llm_provider_upsert_request.personas
     if persona_ids:
-        fetched_persona_ids = set(
-            db_session.scalars(
-                select(Persona.id).where(Persona.id.in_(persona_ids))
-            ).all()
+        _fetched_persona_ids, missing_personas = validate_persona_ids_exist(
+            db_session, persona_ids
         )
-        missing_personas = sorted(set(persona_ids) - fetched_persona_ids)
         if missing_personas:
             raise HTTPException(
                 status_code=400,
-                detail={
-                    "message": f"Invalid persona IDs: {', '.join(map(str, missing_personas))}"
-                },
+                detail=f"Invalid persona IDs: {', '.join(map(str, missing_personas))}",
             )
         # Remove duplicates while preserving order
         seen: set[int] = set()
@@ -304,7 +288,7 @@ def put_llm_provider(
         )
     except ValueError as e:
         logger.exception("Failed to upsert LLM Provider")
-        raise HTTPException(status_code=400, detail={"message": str(e)})
+        raise HTTPException(status_code=400, detail=str(e))
 
 
 @admin_router.delete("/provider/{provider_id}")
@@ -315,58 +299,9 @@ def delete_llm_provider(
 ) -> None:
     provider = db_session.get(LLMProviderModel, provider_id)
     if not provider:
-        raise HTTPException(
-            status_code=404, detail={"message": "LLM Provider not found"}
-        )
-
-    in_use_personas = list(
-        db_session.scalars(
-            select(Persona.name).where(
-                Persona.llm_model_provider_override == provider.name,
-                Persona.deleted == False,  # noqa: E712
-            )
-        ).all()
-    )
-    if in_use_personas:
-        raise HTTPException(
-            status_code=400,
-            detail={
-                "message": (
-                    "Cannot delete provider while the following assistants reference it."
-                ),
-                "personas": in_use_personas,
-            },
-        )
+        raise HTTPException(status_code=404, detail="LLM Provider not found")
 
     remove_llm_provider(db_session, provider_id)
-
-
-@admin_router.get("/provider/{provider_id}/usage")
-def get_llm_provider_usage(
-    provider_id: int,
-    _: User | None = Depends(current_admin_user),
-    db_session: Session = Depends(get_session),
-) -> LLMProviderUsageResponse:
-    provider = db_session.get(LLMProviderModel, provider_id)
-    if not provider:
-        raise HTTPException(
-            status_code=404, detail={"message": "LLM Provider not found"}
-        )
-
-    personas = list(
-        db_session.scalars(
-            select(Persona).where(
-                Persona.llm_model_provider_override == provider.name,
-                Persona.deleted == False,  # noqa: E712
-            )
-        ).all()
-    )
-    return LLMProviderUsageResponse(
-        personas=[
-            LLMProviderUsagePersona(id=persona.id, name=persona.name)
-            for persona in personas
-        ]
-    )
 
 
 @admin_router.post("/provider/{provider_id}/default")
@@ -433,63 +368,96 @@ def get_vision_capable_providers(
 
 @basic_router.get("/provider")
 def list_llm_provider_basics(
-    persona_id: int | None = Query(
-        None, description="Filter providers by persona access"
-    ),
-    user: User | None = Depends(current_chat_accessible_user),
+    _: User | None = Depends(current_chat_accessible_user),
     db_session: Session = Depends(get_session),
 ) -> list[LLMProviderDescriptor]:
+    """Get public LLM providers (providers with is_public=True).
+
+    This is used as the default when no assistant is selected.
+    Only returns providers where is_public=True, regardless of group/persona restrictions.
+    """
     start_time = datetime.now(timezone.utc)
-    logger.debug("Starting to fetch basic LLM providers for user")
-
-    # If persona_id provided, fetch persona and filter by persona access
-    persona: Persona | None = None
-    if persona_id is not None:
-        persona = db_session.scalar(
-            select(Persona)
-            .options(selectinload(Persona.groups))
-            .where(Persona.id == persona_id, Persona.deleted == False)  # noqa: E712
-        )
-        if not persona:
-            raise HTTPException(
-                status_code=404, detail={"message": "Persona not found"}
-            )
-
-    # Get user's group IDs once
-    user_group_ids: set[int] | None = None
-    if user:
-        user_group_ids = set(
-            db_session.scalars(
-                select(User__UserGroup.user_group_id).where(
-                    User__UserGroup.user_id == user.id
-                )
-            ).all()
-        )
+    logger.debug("Starting to fetch public LLM providers")
 
     llm_provider_list: list[LLMProviderDescriptor] = []
-    for llm_provider_model in fetch_existing_llm_providers(db_session):
-        # Apply filtering with persona if provided
-        if not can_user_access_llm_provider(
-            db_session=db_session,
-            provider=llm_provider_model,
-            user=user,
-            persona=persona,
-            user_group_ids=user_group_ids,
-        ):
-            continue
 
-        from_model_start = datetime.now(timezone.utc)
-        full_llm_provider = LLMProviderDescriptor.from_model(llm_provider_model)
-        from_model_end = datetime.now(timezone.utc)
-        from_model_duration = (from_model_end - from_model_start).total_seconds()
-        logger.debug(
-            f"LLMProviderView.from_model took {from_model_duration:.2f} seconds"
-        )
-        llm_provider_list.append(full_llm_provider)
+    # Only return public providers (is_public=True)
+    all_providers = fetch_existing_llm_providers(db_session)
+    for llm_provider_model in all_providers:
+        if llm_provider_model.is_public:
+            from_model_start = datetime.now(timezone.utc)
+            full_llm_provider = LLMProviderDescriptor.from_model(llm_provider_model)
+            from_model_end = datetime.now(timezone.utc)
+            from_model_duration = (from_model_end - from_model_start).total_seconds()
+            logger.debug(
+                f"LLMProviderView.from_model took {from_model_duration:.2f} seconds"
+            )
+            llm_provider_list.append(full_llm_provider)
 
     end_time = datetime.now(timezone.utc)
     duration = (end_time - start_time).total_seconds()
-    logger.debug(f"Completed fetching basic LLM providers in {duration:.2f} seconds")
+    logger.debug(
+        f"Completed fetching {len(llm_provider_list)} public LLM providers in {duration:.2f} seconds"
+    )
+
+    return llm_provider_list
+
+
+@basic_router.get("/persona/{persona_id}/providers")
+def list_llm_providers_for_persona(
+    persona_id: int,
+    user: User | None = Depends(current_chat_accessible_user),
+    db_session: Session = Depends(get_session),
+) -> list[LLMProviderDescriptor]:
+    """Get LLM providers for a specific persona.
+
+    Returns providers that the user can access when using this persona.
+    This properly checks:
+    - Public providers (is_public=True) - unless persona.exclude_public_providers=True
+    - Providers restricted to specific user groups
+    - Providers restricted to specific personas (including this one)
+    - Providers with both group AND persona restrictions (AND logic)
+    """
+    start_time = datetime.now(timezone.utc)
+    logger.debug(f"Starting to fetch LLM providers for persona {persona_id}")
+
+    persona = fetch_persona_with_groups(db_session, persona_id)
+    if not persona:
+        raise HTTPException(status_code=404, detail="Persona not found")
+
+    # Verify user has access to this persona
+    if not user_can_access_persona(db_session, persona_id, user, get_editable=False):
+        raise HTTPException(
+            status_code=403,
+            detail="You don't have access to this assistant",
+        )
+
+    all_providers = fetch_existing_llm_providers(db_session)
+    llm_provider_list: list[LLMProviderDescriptor] = []
+
+    # Fetch user group IDs once for all access checks
+    user_group_ids = fetch_user_group_ids(db_session, user)
+
+    for llm_provider_model in all_providers:
+        # Use can_user_access_llm_provider to properly check all access conditions
+        # This handles public providers, group restrictions, persona restrictions,
+        # and AND logic when both groups and personas are set
+        if not can_user_access_llm_provider(
+            llm_provider_model, user_group_ids, persona
+        ):
+            continue
+
+        # If persona excludes public providers, skip public providers
+        if persona.exclude_public_providers and llm_provider_model.is_public:
+            continue
+
+        llm_provider_list.append(LLMProviderDescriptor.from_model(llm_provider_model))
+
+    end_time = datetime.now(timezone.utc)
+    duration = (end_time - start_time).total_seconds()
+    logger.debug(
+        f"Completed fetching {len(llm_provider_list)} LLM providers for persona {persona_id} in {duration:.2f} seconds"
+    )
 
     return llm_provider_list
 
@@ -538,95 +506,6 @@ def get_provider_contextual_cost(
     return costs
 
 
-@admin_router.get("/persona/{persona_id}/available-providers")
-def get_available_providers_for_persona(
-    persona_id: int,
-    _: User | None = Depends(current_admin_user),
-    db_session: Session = Depends(get_session),
-) -> list[LLMProviderView]:
-    persona = db_session.scalar(
-        select(Persona)
-        .options(selectinload(Persona.groups))
-        .where(Persona.id == persona_id, Persona.deleted == False)  # noqa: E712
-    )
-    if not persona:
-        raise HTTPException(status_code=404, detail={"message": "Persona not found"})
-
-    persona_group_ids = {group.id for group in persona.groups}
-    available_providers: list[LLMProviderView] = []
-    for provider in fetch_existing_llm_providers(db_session):
-        provider_persona_ids = {p.id for p in provider.personas}
-        provider_group_ids = {group.id for group in provider.groups}
-
-        if llm_provider_is_public(provider) or (
-            persona.id in provider_persona_ids or persona_group_ids & provider_group_ids
-        ):
-            provider_view = LLMProviderView.from_model(provider)
-            _mask_provider_api_key(provider_view)
-            available_providers.append(provider_view)
-
-    return available_providers
-
-
-@basic_router.get("/unrestricted-providers")
-def list_unrestricted_llm_providers(
-    user: User | None = Depends(current_chat_accessible_user),
-    db_session: Session = Depends(get_session),
-) -> list[LLMProviderDescriptor]:
-    descriptors: list[LLMProviderDescriptor] = []
-    for provider in fetch_existing_llm_providers(db_session):
-        if not llm_provider_is_public(provider):
-            continue
-        descriptors.append(LLMProviderDescriptor.from_model(provider))
-    return descriptors
-
-
-@admin_router.post("/persona/{persona_id}/grant-provider-access")
-def grant_persona_access_to_provider(
-    persona_id: int,
-    request: GrantProviderAccessRequest,
-    _: User | None = Depends(current_admin_user),
-    db_session: Session = Depends(get_session),
-) -> LLMProviderView:
-    persona = db_session.scalar(
-        select(Persona)
-        .options(selectinload(Persona.groups))
-        .where(Persona.id == persona_id, Persona.deleted == False)  # noqa: E712
-    )
-    if not persona:
-        raise HTTPException(status_code=404, detail={"message": "Persona not found"})
-
-    provider = db_session.scalar(
-        select(LLMProviderModel)
-        .options(
-            selectinload(LLMProviderModel.groups),
-            selectinload(LLMProviderModel.personas),
-            selectinload(LLMProviderModel.model_configurations),
-        )
-        .where(LLMProviderModel.id == request.provider_id)
-    )
-    if not provider:
-        raise HTTPException(
-            status_code=404, detail={"message": "LLM Provider not found"}
-        )
-
-    existing_persona_ids = [p.id for p in provider.personas]
-    if persona.id not in existing_persona_ids:
-        updated_persona_ids = [*existing_persona_ids, persona.id]
-        update_llm_provider_persona_relationships__no_commit(
-            db_session=db_session,
-            llm_provider_id=provider.id,
-            persona_ids=updated_persona_ids,
-        )
-        db_session.flush()
-        db_session.refresh(provider)
-
-    provider_view = LLMProviderView.from_model(provider)
-    _mask_provider_api_key(provider_view)
-    db_session.commit()
-    return provider_view
-
-
 @admin_router.post("/bedrock/available-models")
 def get_bedrock_available_models(
     request: BedrockModelsRequest,
@@ -652,9 +531,7 @@ def get_bedrock_available_models(
         except Exception as e:
             raise HTTPException(
                 status_code=400,
-                detail={
-                    "message": f"Failed to create Bedrock client: {e}. Check AWS credentials and region."
-                },
+                detail=f"Failed to create Bedrock client: {e}. Check AWS credentials and region.",
             )
 
         # Available Bedrock models: text-only, streaming supported
@@ -703,12 +580,12 @@ def get_bedrock_available_models(
     except (ClientError, NoCredentialsError, BotoCoreError) as e:
         raise HTTPException(
             status_code=400,
-            detail={"message": f"Failed to connect to AWS Bedrock: {e}"},
+            detail=f"Failed to connect to AWS Bedrock: {e}",
         )
     except Exception as e:
         raise HTTPException(
             status_code=500,
-            detail={"message": f"Unexpected error fetching Bedrock models: {e}"},
+            detail=f"Unexpected error fetching Bedrock models: {e}",
         )
 
 
@@ -722,7 +599,7 @@ def _get_ollama_available_model_names(api_base: str) -> set[str]:
     except Exception as e:
         raise HTTPException(
             status_code=400,
-            detail={"message": f"Failed to fetch Ollama models: {e}"},
+            detail=f"Failed to fetch Ollama models: {e}",
         )
 
     models = response_json.get("models", [])
@@ -740,14 +617,14 @@ def get_ollama_available_models(
     if not cleaned_api_base:
         raise HTTPException(
             status_code=400,
-            detail={"message": "API base URL is required to fetch Ollama models."},
+            detail="API base URL is required to fetch Ollama models.",
         )
 
     model_names = _get_ollama_available_model_names(cleaned_api_base)
     if not model_names:
         raise HTTPException(
             status_code=400,
-            detail={"message": "No models found from your Ollama server"},
+            detail="No models found from your Ollama server",
         )
 
     all_models_with_context_size_and_vision: list[OllamaFinalModelResponse] = []

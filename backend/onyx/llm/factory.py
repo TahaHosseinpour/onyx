@@ -15,6 +15,7 @@ from onyx.db.llm import fetch_default_vision_provider
 from onyx.db.llm import fetch_existing_llm_provider
 from onyx.db.llm import fetch_existing_llm_providers
 from onyx.db.llm import fetch_llm_provider_view
+from onyx.db.llm import fetch_user_group_ids
 from onyx.db.models import Persona
 from onyx.db.models import User
 from onyx.llm.chat_llm import DefaultMultiLLM
@@ -68,7 +69,7 @@ def get_main_llm_from_tuple(
 
 def get_llms_for_persona(
     persona: Persona | PersonaOverrideConfig | None,
-    user: User | None = None,
+    user: User | None,
     llm_override: LLMOverride | None = None,
     additional_headers: dict[str, str] | None = None,
     long_term_logger: LongTermLogger | None = None,
@@ -94,12 +95,17 @@ def get_llms_for_persona(
         if not provider_model:
             raise ValueError("No LLM provider found")
 
+        # Only check access control for database Persona entities, not PersonaOverrideConfig
+        # PersonaOverrideConfig is used for temporary overrides and doesn't have access restrictions
         persona_model = persona if isinstance(persona, Persona) else None
+
+        # Fetch user group IDs for access control check
+        user_group_ids = fetch_user_group_ids(db_session, user)
+
         if not can_user_access_llm_provider(
-            db_session=db_session,
-            provider=provider_model,
-            user=user,
-            persona=persona_model,
+            provider_model,
+            user_group_ids,
+            persona_model,
         ):
             logger.warning(
                 "User %s with persona %s cannot access provider %s. Falling back to default provider.",

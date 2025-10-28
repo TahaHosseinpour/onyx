@@ -20,12 +20,14 @@ export const IsPublicGroupSelector = <T extends IsPublicGroupSelectorFormType>({
   publicToWhom = "Users",
   removeIndent = false,
   enforceGroupSelection = true,
+  smallLabels = false,
 }: {
   formikProps: FormikProps<T>;
   objectName: string;
   publicToWhom?: string;
   removeIndent?: boolean;
   enforceGroupSelection?: boolean;
+  smallLabels?: boolean;
 }) => {
   const { data: userGroups, isLoading: userGroupsIsLoading } = useUserGroups();
   const { isAdmin, user, isCurator } = useUser();
@@ -89,6 +91,7 @@ export const IsPublicGroupSelector = <T extends IsPublicGroupSelectorFormType>({
           <BooleanFormField
             name="is_public"
             removeIndent={removeIndent}
+            small={smallLabels}
             label={
               publicToWhom === "Curators"
                 ? `Make this ${objectName} Curator Accessible?`
@@ -107,17 +110,17 @@ export const IsPublicGroupSelector = <T extends IsPublicGroupSelectorFormType>({
         </>
       )}
 
-      {(!formikProps.values.is_public || isCurator) && (
-        <GroupsMultiSelect
-          formikProps={formikProps}
-          label={`Assign group access for this ${objectName}`}
-          subtext={
-            isAdmin || !enforceGroupSelection
-              ? `This ${objectName} will be visible/accessible by the groups selected below`
-              : `Curators must select one or more groups to give access to this ${objectName}`
-          }
-        />
-      )}
+      <GroupsMultiSelect
+        formikProps={formikProps}
+        label={`Assign group access for this ${objectName}`}
+        subtext={
+          isAdmin || !enforceGroupSelection
+            ? `This ${objectName} will be visible/accessible by the groups selected below`
+            : `Curators must select one or more groups to give access to this ${objectName}`
+        }
+        disabled={formikProps.values.is_public && !isCurator}
+        disabledMessage={`This ${objectName} is public and available to all users.`}
+      />
     </div>
   );
 };

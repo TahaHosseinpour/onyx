@@ -39,6 +39,7 @@ import { AuthType, NEXT_PUBLIC_CLOUD_ENABLED } from "./constants";
 import { useUser } from "@/components/user/UserProvider";
 import { SEARCH_TOOL_ID } from "@/app/chat/components/tools/constants";
 import { updateTemperatureOverrideForChatSession } from "@/app/chat/services/lib";
+import { useLLMProviders } from "./hooks/useLLMProviders";
 
 const CREDENTIAL_URL = "/api/manage/admin/credential";
 
@@ -492,6 +493,8 @@ export interface LlmManager {
   updateImageFilesPresent: (present: boolean) => void;
   liveAssistant: MinimalPersonaSnapshot | null;
   maxTemperature: number;
+  llmProviders: LLMProviderDescriptor[];
+  isLoadingProviders: boolean;
 }
 
 // Things to test
@@ -536,11 +539,46 @@ providing appropriate defaults for new conversations based on the available tool
 */
 
 export function useLlmManager(
-  llmProviders: LLMProviderDescriptor[],
+  contextLlmProviders: LLMProviderDescriptor[],
   currentChatSession?: ChatSession,
   liveAssistant?: MinimalPersonaSnapshot
 ): LlmManager {
   const { user } = useUser();
+
+  // Fetch persona-specific providers if we have a liveAssistant
+  const {
+    llmProviders: personaProviders,
+    isLoading: isLoadingPersonaProviders,
+  } = useLLMProviders(liveAssistant?.id);
+
+  // Stable empty array reference to avoid infinite re-renders
+  const emptyProvidersRef = useRef<LLMProviderDescriptor[]>([]);
+
+  // Determine which providers to show and whether we're in a loading state
+  const llmProviders = useMemo(() => {
+    // No assistant selected - use context providers (public providers only)
+    if (!liveAssistant?.id) {
+      return contextLlmProviders;
+    }
+
+    // Assistant selected and data loaded - use persona-specific providers
+    // Backend returns assigned providers or public providers as fallback
+    if (!isLoadingPersonaProviders) {
+      return personaProviders;
+    }
+
+    return emptyProvidersRef.current;
+  }, [
+    liveAssistant?.id,
+    isLoadingPersonaProviders,
+    personaProviders,
+    contextLlmProviders,
+  ]);
+
+  // Expose loading state: only true when assistant is selected and loading
+  const isLoadingProviders = Boolean(
+    liveAssistant?.id && isLoadingPersonaProviders
+  );
 
   const [userHasManuallyOverriddenLLM, setUserHasManuallyOverriddenLLM] =
     useState(false);
@@ -731,6 +769,8 @@ export function useLlmManager(
     updateImageFilesPresent,
     liveAssistant: liveAssistant ?? null,
     maxTemperature,
+    llmProviders,
+    isLoadingProviders,
   };
 }
 
@@ -1022,11 +1062,14 @@ const MODEL_DISPLAY_NAMES: { [key: string]: string } = {
   vicuna: "Vicuna",
 };
 
-export function getDisplayNameForModel(modelName: string): string {
+export function getDisplayNameForModel(
+  modelName: string,
+  isLoadingProviders: boolean = false
+): string {
   if (modelName.startsWith("bedrock/")) {
     const parts = modelName.split("/");
     const lastPart = parts[parts.length - 1];
-    if (lastPart === undefined) {
+    if (lastPart === undefined || isLoadingProviders) {
       return "";
     }
 

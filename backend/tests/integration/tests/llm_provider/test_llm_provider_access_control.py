@@ -1,3 +1,5 @@
+import os
+
 import pytest
 import requests
 from sqlalchemy.orm import Session
@@ -5,7 +7,7 @@ from sqlalchemy.orm import Session
 from onyx.context.search.enums import RecencyBiasSetting
 from onyx.db.engine.sql_engine import get_session_with_current_tenant
 from onyx.db.llm import can_user_access_llm_provider
-from onyx.db.llm import llm_provider_is_public
+from onyx.db.llm import fetch_user_group_ids
 from onyx.db.models import LLMProvider as LLMProviderModel
 from onyx.db.models import LLMProvider__Persona
 from onyx.db.models import LLMProvider__UserGroup
@@ -18,8 +20,13 @@ from tests.integration.common_utils.constants import API_SERVER_URL
 from tests.integration.common_utils.managers.llm_provider import LLMProviderManager
 from tests.integration.common_utils.managers.persona import PersonaManager
 from tests.integration.common_utils.managers.user import UserManager
-from tests.integration.common_utils.managers.user_group import UserGroupManager
 from tests.integration.common_utils.test_models import DATestUser
+
+
+pytestmark = pytest.mark.skipif(
+    os.environ.get("ENABLE_PAID_ENTERPRISE_EDITION_FEATURES", "").lower() != "true",
+    reason="LLM provider access control is enterprise only",
+)
 
 
 def _create_llm_provider(
@@ -42,7 +49,9 @@ def _create_llm_provider(
         fast_default_model_name=fast_model_name,
         deployment_name=None,
         is_public=is_public,
-        is_default_provider=is_default,
+        # Use None instead of False to avoid unique constraint violation
+        # The is_default_provider column has unique=True, so only one True and one False allowed
+        is_default_provider=is_default if is_default else None,
         is_default_vision_provider=False,
         default_vision_model=None,
     )
@@ -88,9 +97,17 @@ def users(reset: None) -> tuple[DATestUser, DATestUser]:
 def test_can_user_access_llm_provider_or_logic(
     users: tuple[DATestUser, DATestUser],
 ) -> None:
+    """Test LLM provider access control with is_public flag and AND logic.
+
+    Tests the new access control logic:
+    - is_public=True providers are accessible to everyone
+    - is_public=False with no restrictions locks the provider
+    - When both groups AND personas are set, AND logic applies (must satisfy both)
+    """
     admin_user, basic_user = users
 
     with get_session_with_current_tenant() as db_session:
+        # Public provider - accessible to everyone
         default_provider = _create_llm_provider(
             db_session,
             name="default-provider",
@@ -99,14 +116,16 @@ def test_can_user_access_llm_provider_or_logic(
             is_public=True,
             is_default=True,
         )
-        unrestricted_provider = _create_llm_provider(
+        # Locked provider - is_public=False with no restrictions
+        locked_provider = _create_llm_provider(
             db_session,
-            name="unrestricted-provider",
+            name="locked-provider",
             default_model_name="gpt-4o",
             fast_model_name="gpt-4o-mini",
             is_public=False,
             is_default=False,
         )
+        # Restricted provider - has both group AND persona restrictions (AND logic)
         restricted_provider = _create_llm_provider(
             db_session,
             name="restricted-provider",
@@ -131,6 +150,7 @@ def test_can_user_access_llm_provider_or_logic(
         db_session.add(access_group)
         db_session.flush()
 
+        # Add both group and persona restrictions to restricted_provider
         db_session.add(
             LLMProvider__UserGroup(
                 llm_provider_id=restricted_provider.id,
@@ -143,6 +163,7 @@ def test_can_user_access_llm_provider_or_logic(
                 persona_id=allowed_persona.id,
             )
         )
+        # Only admin_user is in the access_group
         db_session.add(
             User__UserGroup(
                 user_group_id=access_group.id,
@@ -152,7 +173,7 @@ def test_can_user_access_llm_provider_or_logic(
         db_session.flush()
 
         db_session.refresh(restricted_provider)
-        db_session.refresh(unrestricted_provider)
+        db_session.refresh(locked_provider)
 
         admin_model = db_session.get(User, admin_user.id)
         basic_model = db_session.get(User, basic_user.id)
@@ -160,29 +181,66 @@ def test_can_user_access_llm_provider_or_logic(
         assert admin_model is not None
         assert basic_model is not None
 
-        assert llm_provider_is_public(default_provider)
-        assert llm_provider_is_public(unrestricted_provider)
-        assert not llm_provider_is_public(restricted_provider)
+        # Fetch user group IDs for both users
+        admin_group_ids = fetch_user_group_ids(db_session, admin_model)
+        basic_group_ids = fetch_user_group_ids(db_session, basic_model)
 
+        # Test is_public flag
+        assert default_provider.is_public
+        assert not locked_provider.is_public
+        assert not restricted_provider.is_public
+
+        # Public provider - everyone can access
         assert can_user_access_llm_provider(
-            db_session=db_session,
-            provider=restricted_provider,
-            user=admin_model,
-            persona=blocked_persona,
+            default_provider,
+            admin_group_ids,
+            allowed_persona,
+        )
+        assert can_user_access_llm_provider(
+            default_provider,
+            basic_group_ids,
+            blocked_persona,
         )
 
-        assert can_user_access_llm_provider(
-            db_session=db_session,
-            provider=restricted_provider,
-            user=basic_model,
-            persona=allowed_persona,
-        )
-
+        # Locked provider (is_public=False, no restrictions) - nobody can access
         assert not can_user_access_llm_provider(
-            db_session=db_session,
-            provider=restricted_provider,
-            user=basic_model,
-            persona=blocked_persona,
+            locked_provider,
+            admin_group_ids,
+            allowed_persona,
+        )
+        assert not can_user_access_llm_provider(
+            locked_provider,
+            basic_group_ids,
+            allowed_persona,
+        )
+
+        # Restricted provider with AND logic (both groups AND personas set)
+        # admin_user in group + allowed_persona whitelisted → SUCCESS (both conditions met)
+        assert can_user_access_llm_provider(
+            restricted_provider,
+            admin_group_ids,
+            allowed_persona,
+        )
+
+        # admin_user in group + blocked_persona not whitelisted → FAIL (persona not allowed)
+        assert not can_user_access_llm_provider(
+            restricted_provider,
+            admin_group_ids,
+            blocked_persona,
+        )
+
+        # basic_user not in group + allowed_persona whitelisted → FAIL (user not in group)
+        assert not can_user_access_llm_provider(
+            restricted_provider,
+            basic_group_ids,
+            allowed_persona,
+        )
+
+        # basic_user not in group + blocked_persona not whitelisted → FAIL (neither condition met)
+        assert not can_user_access_llm_provider(
+            restricted_provider,
+            basic_group_ids,
+            blocked_persona,
         )
 
 
@@ -257,8 +315,17 @@ def test_get_llms_for_persona_falls_back_when_access_denied(
         assert fallback_llm.config.model_name == default_provider.default_model_name
 
 
-def test_provider_usage_endpoint_and_delete_guard(reset: None) -> None:
+def test_provider_delete_clears_persona_references(reset: None) -> None:
+    """Test that deleting a provider automatically clears persona references."""
     admin_user = UserManager.create(name="admin_user")
+
+    # Create a default provider first so personas have something to fall back to
+    LLMProviderManager.create(
+        name="default-provider",
+        is_public=True,
+        set_as_default=True,
+        user_performing_action=admin_user,
+    )
 
     provider = LLMProviderManager.create(
         is_public=False,
@@ -270,106 +337,17 @@ def test_provider_usage_endpoint_and_delete_guard(reset: None) -> None:
         user_performing_action=admin_user,
     )
 
-    usage_response = requests.get(
-        f"{API_SERVER_URL}/admin/llm/provider/{provider.id}/usage",
-        headers=admin_user.headers,
-    )
-    assert usage_response.status_code == 200
-    usage_data = usage_response.json()
-    assert usage_data["personas"]
-    assert usage_data["personas"][0]["id"] == persona.id
-
-    delete_response = requests.delete(
-        f"{API_SERVER_URL}/admin/llm/provider/{provider.id}",
-        headers=admin_user.headers,
-    )
-    assert delete_response.status_code == 400
-    detail = delete_response.json()["detail"]
-    assert persona.name in detail["personas"]
-
-    persona = PersonaManager.edit(
-        persona=persona,
-        llm_model_provider_override=None,
-        user_performing_action=admin_user,
-    )
-
+    # Delete the provider - should succeed and automatically clear persona references
     assert LLMProviderManager.delete(
         provider,
         user_performing_action=admin_user,
     )
 
-
-def test_available_provider_endpoints_and_grant_access(reset: None) -> None:
-    admin_user = UserManager.create(name="admin_user")
-    basic_user = UserManager.create(name="basic_user")
-
-    restricted_group = UserGroupManager.create(user_performing_action=admin_user)
-    restricted_provider = LLMProviderManager.create(
-        groups=[restricted_group.id],
-        personas=[],
-        is_public=False,
-        set_as_default=False,
-        user_performing_action=admin_user,
-    )
-    public_provider = LLMProviderManager.create(
-        is_public=True,
-        set_as_default=False,
-        user_performing_action=admin_user,
-    )
-    persona = PersonaManager.create(
-        groups=[],
-        user_performing_action=admin_user,
-    )
-
-    available_response = requests.get(
-        f"{API_SERVER_URL}/admin/llm/persona/{persona.id}/available-providers",
+    # Verify the persona now falls back to default (llm_model_provider_override cleared)
+    persona_response = requests.get(
+        f"{API_SERVER_URL}/persona/{persona.id}",
         headers=admin_user.headers,
     )
-    assert available_response.status_code == 200
-    available_ids = {provider_json["id"] for provider_json in available_response.json()}
-    assert public_provider.id in available_ids
-    assert restricted_provider.id not in available_ids
-    for provider_json in available_response.json():
-        assert "****" in provider_json["api_key"]
-
-    new_persona_response = requests.get(
-        f"{API_SERVER_URL}/admin/llm/persona/new/available-providers",
-        headers=admin_user.headers,
-    )
-    assert new_persona_response.status_code == 200
-    new_persona_ids = {
-        provider_json["id"] for provider_json in new_persona_response.json()
-    }
-    assert public_provider.id in new_persona_ids
-    assert restricted_provider.id not in new_persona_ids
-
-    unrestricted_response = requests.get(
-        f"{API_SERVER_URL}/llm/unrestricted-providers",
-        headers=basic_user.headers,
-    )
-    assert unrestricted_response.status_code == 200
-    unrestricted_ids = {
-        provider_json["id"] for provider_json in unrestricted_response.json()
-    }
-    assert public_provider.id in unrestricted_ids
-    assert restricted_provider.id not in unrestricted_ids
-
-    grant_response = requests.post(
-        f"{API_SERVER_URL}/admin/llm/persona/{persona.id}/grant-provider-access",
-        json={"provider_id": restricted_provider.id},
-        headers=admin_user.headers,
-    )
-    assert grant_response.status_code == 200
-    grant_data = grant_response.json()
-    assert persona.id in grant_data["personas"]
-    assert "****" in grant_data["api_key"]
-
-    available_after_grant = requests.get(
-        f"{API_SERVER_URL}/admin/llm/persona/{persona.id}/available-providers",
-        headers=admin_user.headers,
-    )
-    assert available_after_grant.status_code == 200
-    available_after_ids = {
-        provider_json["id"] for provider_json in available_after_grant.json()
-    }
-    assert restricted_provider.id in available_after_ids
+    assert persona_response.status_code == 200
+    updated_persona = persona_response.json()
+    assert updated_persona["llm_model_provider_override"] is None

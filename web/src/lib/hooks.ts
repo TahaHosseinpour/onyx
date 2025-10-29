@@ -388,78 +388,96 @@ export function useFilters(): FilterManager {
     setSelectedSources([]);
     setSelectedDocumentSets([]);
     setSelectedTags([]);
-  }, []);
+  }, [setTimeRange]);
 
-  function buildFiltersFromQueryString(
-    filterString: string,
-    availableSources: SourceMetadata[],
-    availableDocumentSets: string[],
-    availableTags: Tag[]
-  ): void {
-    const params = new URLSearchParams(filterString);
+  const buildFiltersFromQueryString = useCallback(
+    (
+      filterString: string,
+      availableSources: SourceMetadata[],
+      availableDocumentSets: string[],
+      availableTags: Tag[]
+    ): void => {
+      const params = new URLSearchParams(filterString);
 
-    // Parse the "from" parameter as a DateRangePickerValue
-    let newTimeRange: DateRangePickerValue | null = null;
-    const fromParam = params.get("from");
-    const toParam = params.get("to");
-    if (fromParam && toParam) {
-      const fromDate = new Date(fromParam);
-      const toDate = new Date(toParam);
-      if (!isNaN(fromDate.getTime()) && !isNaN(toDate.getTime())) {
-        newTimeRange = { from: fromDate, to: toDate, selectValue: "" };
+      // Parse the "from" parameter as a DateRangePickerValue
+      let newTimeRange: DateRangePickerValue | null = null;
+      const fromParam = params.get("from");
+      const toParam = params.get("to");
+      if (fromParam && toParam) {
+        const fromDate = new Date(fromParam);
+        const toDate = new Date(toParam);
+        if (!isNaN(fromDate.getTime()) && !isNaN(toDate.getTime())) {
+          newTimeRange = { from: fromDate, to: toDate, selectValue: "" };
+        }
       }
-    }
 
-    // Parse sources
-    let newSelectedSources: SourceMetadata[] = [];
-    const sourcesParam = params.get("sources");
-    if (sourcesParam) {
-      const sourceNames = sourcesParam.split(",").map(decodeURIComponent);
-      newSelectedSources = availableSources.filter((source) =>
-        sourceNames.includes(source.internalName)
-      );
-    }
+      // Parse sources
+      let newSelectedSources: SourceMetadata[] = [];
+      const sourcesParam = params.get("sources");
+      if (sourcesParam) {
+        const sourceNames = sourcesParam.split(",").map(decodeURIComponent);
+        newSelectedSources = availableSources.filter((source) =>
+          sourceNames.includes(source.internalName)
+        );
+      }
 
-    // Parse document sets
-    let newSelectedDocSets: string[] = [];
-    const docSetsParam = params.get("documentSets");
-    if (docSetsParam) {
-      const docSetNames = docSetsParam.split(",").map(decodeURIComponent);
-      newSelectedDocSets = availableDocumentSets.filter((ds) =>
-        docSetNames.includes(ds)
-      );
-    }
+      // Parse document sets
+      let newSelectedDocSets: string[] = [];
+      const docSetsParam = params.get("documentSets");
+      if (docSetsParam) {
+        const docSetNames = docSetsParam.split(",").map(decodeURIComponent);
+        newSelectedDocSets = availableDocumentSets.filter((ds) =>
+          docSetNames.includes(ds)
+        );
+      }
 
-    // Parse tags
-    let newSelectedTags: Tag[] = [];
-    const tagsParam = params.get("tags");
-    if (tagsParam) {
-      const tagValues = tagsParam.split(",").map(decodeURIComponent);
-      newSelectedTags = availableTags.filter((tag) =>
-        tagValues.includes(tag.tag_value)
-      );
-    }
+      // Parse tags
+      let newSelectedTags: Tag[] = [];
+      const tagsParam = params.get("tags");
+      if (tagsParam) {
+        const tagValues = tagsParam.split(",").map(decodeURIComponent);
+        newSelectedTags = availableTags.filter((tag) =>
+          tagValues.includes(tag.tag_value)
+        );
+      }
 
-    // Update filter manager's values instead of returning
-    setTimeRange(newTimeRange);
-    setSelectedSources(newSelectedSources);
-    setSelectedDocumentSets(newSelectedDocSets);
-    setSelectedTags(newSelectedTags);
-  }
+      // Update filter manager's values instead of returning
+      setTimeRange(newTimeRange);
+      setSelectedSources(newSelectedSources);
+      setSelectedDocumentSets(newSelectedDocSets);
+      setSelectedTags(newSelectedTags);
+    },
+    [setTimeRange, setSelectedSources, setSelectedDocumentSets, setSelectedTags]
+  );
 
-  return {
-    clearFilters,
-    timeRange,
-    setTimeRange,
-    selectedSources,
-    setSelectedSources,
-    selectedDocumentSets,
-    setSelectedDocumentSets,
-    selectedTags,
-    setSelectedTags,
-    getFilterString,
-    buildFiltersFromQueryString,
-  };
+  return useMemo(
+    () => ({
+      clearFilters,
+      timeRange,
+      setTimeRange,
+      selectedSources,
+      setSelectedSources,
+      selectedDocumentSets,
+      setSelectedDocumentSets,
+      selectedTags,
+      setSelectedTags,
+      getFilterString,
+      buildFiltersFromQueryString,
+    }),
+    [
+      clearFilters,
+      timeRange,
+      setTimeRange,
+      selectedSources,
+      setSelectedSources,
+      selectedDocumentSets,
+      setSelectedDocumentSets,
+      selectedTags,
+      setSelectedTags,
+      getFilterString,
+      buildFiltersFromQueryString,
+    ]
+  );
 }
 
 interface UseUsersParams {
@@ -633,61 +651,70 @@ export function useLlmManager(
     setChatSession(currentChatSession || null);
   };
 
-  const getValidLlmDescriptor = (
-    modelName: string | null | undefined
-  ): LlmDescriptor => {
-    if (modelName) {
-      const model = parseLlmDescriptor(modelName);
-      if (!(model.modelName && model.modelName.length > 0)) {
+  const getValidLlmDescriptor = useCallback(
+    (modelName: string | null | undefined): LlmDescriptor => {
+      if (modelName) {
+        const model = parseLlmDescriptor(modelName);
+        if (!(model.modelName && model.modelName.length > 0)) {
+          const provider = llmProviders.find((p) =>
+            p.model_configurations
+              .map((modelConfiguration) => modelConfiguration.name)
+              .includes(modelName)
+          );
+          if (provider) {
+            return {
+              modelName: modelName,
+              name: provider.name,
+              provider: provider.provider,
+            };
+          }
+        }
+
         const provider = llmProviders.find((p) =>
           p.model_configurations
             .map((modelConfiguration) => modelConfiguration.name)
-            .includes(modelName)
+            .includes(model.modelName)
         );
+
         if (provider) {
-          return {
-            modelName: modelName,
-            name: provider.name,
-            provider: provider.provider,
-          };
+          return { ...model, provider: provider.provider, name: provider.name };
         }
       }
-
-      const provider = llmProviders.find((p) =>
-        p.model_configurations
-          .map((modelConfiguration) => modelConfiguration.name)
-          .includes(model.modelName)
-      );
-
-      if (provider) {
-        return { ...model, provider: provider.provider, name: provider.name };
-      }
-    }
-    return { name: "", provider: "", modelName: "" };
-  };
+      return { name: "", provider: "", modelName: "" };
+    },
+    [llmProviders]
+  );
 
   const [imageFilesPresent, setImageFilesPresent] = useState(false);
 
-  const updateImageFilesPresent = (present: boolean) => {
+  const updateImageFilesPresent = useCallback((present: boolean) => {
     setImageFilesPresent(present);
-  };
+  }, []);
 
   // Manually set the LLM
-  const updateCurrentLlm = (newLlm: LlmDescriptor) => {
+  const updateCurrentLlm = useCallback((newLlm: LlmDescriptor) => {
     setCurrentLlm(newLlm);
     setUserHasManuallyOverriddenLLM(true);
-  };
+  }, []);
 
-  const updateCurrentLlmToModelName = (modelName: string) => {
-    setCurrentLlm(getValidLlmDescriptor(modelName));
-    setUserHasManuallyOverriddenLLM(true);
-  };
+  const updateCurrentLlmToModelName = useCallback(
+    (modelName: string) => {
+      setCurrentLlm(getValidLlmDescriptor(modelName));
+      setUserHasManuallyOverriddenLLM(true);
+    },
+    [getValidLlmDescriptor]
+  );
 
-  const updateModelOverrideBasedOnChatSession = (chatSession?: ChatSession) => {
-    if (chatSession && chatSession.current_alternate_model?.length > 0) {
-      setCurrentLlm(getValidLlmDescriptor(chatSession.current_alternate_model));
-    }
-  };
+  const updateModelOverrideBasedOnChatSession = useCallback(
+    (chatSession?: ChatSession) => {
+      if (chatSession && chatSession.current_alternate_model?.length > 0) {
+        setCurrentLlm(
+          getValidLlmDescriptor(chatSession.current_alternate_model)
+        );
+      }
+    },
+    [getValidLlmDescriptor]
+  );
 
   const [temperature, setTemperature] = useState<number>(() => {
     llmUpdate();
@@ -748,30 +775,48 @@ export function useLlmManager(
     user?.preferences?.default_model,
   ]);
 
-  const updateTemperature = (temperature: number) => {
-    if (isAnthropic(currentLlm.provider, currentLlm.modelName)) {
-      setTemperature(Math.min(temperature, 1.0));
-    } else {
-      setTemperature(temperature);
-    }
-    if (chatSession) {
-      updateTemperatureOverrideForChatSession(chatSession.id, temperature);
-    }
-  };
+  const updateTemperature = useCallback(
+    (temperature: number) => {
+      if (isAnthropic(currentLlm.provider, currentLlm.modelName)) {
+        setTemperature(Math.min(temperature, 1.0));
+      } else {
+        setTemperature(temperature);
+      }
+      if (chatSession) {
+        updateTemperatureOverrideForChatSession(chatSession.id, temperature);
+      }
+    },
+    [currentLlm.provider, currentLlm.modelName, chatSession]
+  );
 
-  return {
-    updateModelOverrideBasedOnChatSession,
-    currentLlm,
-    updateCurrentLlm,
-    temperature,
-    updateTemperature,
-    imageFilesPresent,
-    updateImageFilesPresent,
-    liveAssistant: liveAssistant ?? null,
-    maxTemperature,
-    llmProviders,
-    isLoadingProviders,
-  };
+  return useMemo(
+    () => ({
+      updateModelOverrideBasedOnChatSession,
+      currentLlm,
+      updateCurrentLlm,
+      temperature,
+      updateTemperature,
+      imageFilesPresent,
+      updateImageFilesPresent,
+      liveAssistant: liveAssistant ?? null,
+      maxTemperature,
+      llmProviders,
+      isLoadingProviders,
+    }),
+    [
+      updateModelOverrideBasedOnChatSession,
+      currentLlm,
+      updateCurrentLlm,
+      temperature,
+      updateTemperature,
+      imageFilesPresent,
+      updateImageFilesPresent,
+      liveAssistant,
+      maxTemperature,
+      llmProviders,
+      isLoadingProviders,
+    ]
+  );
 }
 
 export function useAuthType(): AuthType | null {

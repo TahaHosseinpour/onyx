@@ -721,7 +721,7 @@ export function LLMProviderUpdateForm({
                         </div>
                       )}
                       <Separator />
-                      <div>
+                      <div className="flex flex-col gap-2">
                         <Text className="text-lg font-semibold mb-4">
                           Access Controls
                         </Text>

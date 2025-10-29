@@ -1,4 +1,5 @@
-import useSWR, { mutate } from "swr";
+import { useRef } from "react";
+import useSWR from "swr";
 import { LLMProviderDescriptor } from "@/app/admin/configuration/llm/interfaces";
 import { errorHandlingFetcher } from "@/lib/fetcher";
 
@@ -8,13 +9,16 @@ export function useLLMProviders(personaId?: number) {
       ? `/api/llm/persona/${personaId}/providers`
       : "/api/llm/provider";
 
+  // Stable empty array reference to avoid creating new arrays on every render
+  const emptyArrayRef = useRef<LLMProviderDescriptor[]>([]);
+
   const { data, error, mutate } = useSWR<LLMProviderDescriptor[]>(
     url,
     errorHandlingFetcher
   );
 
   return {
-    llmProviders: data || [],
+    llmProviders: data || emptyArrayRef.current,
     isLoading: !error && !data,
     error,
     refetch: mutate,

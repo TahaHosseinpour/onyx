@@ -627,6 +627,10 @@ export function ChatPage({
     });
   }, [message, onSubmit, currentMessageFiles, deepResearchEnabled]);
 
+  const removeDocs = useCallback(() => {
+    setSelectedDocuments([]);
+  }, []);
+
   // Memoize the selected assistant to prevent new references
   const memoizedSelectedAssistant = useMemo(() => {
     return selectedAssistant || liveAssistant;
@@ -911,7 +915,7 @@ export function ChatPage({
                           toggleDocumentSidebar={toggleDocumentSidebar}
                           filterManager={filterManager}
                           llmManager={llmManager}
-                          removeDocs={() => setSelectedDocuments([])}
+                          removeDocs={removeDocs}
                           retrievalEnabled={retrievalEnabled}
                           selectedDocuments={selectedDocuments}
                           message={message}

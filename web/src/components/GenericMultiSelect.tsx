@@ -1,9 +1,8 @@
 import { FormikProps, ErrorMessage } from "formik";
 import Text from "@/refresh-components/texts/Text";
-import IconButton from "@/refresh-components/buttons/IconButton";
+import Chip from "@/refresh-components/buttons/Chip";
 import { SearchMultiSelectDropdown } from "@/components/Dropdown";
 import { cn } from "@/lib/utils";
-import SvgX from "@/icons/x";
 
 export type GenericMultiSelectFormType<T extends string> = {
   [K in T]: number[];
@@ -119,23 +118,12 @@ export function GenericMultiSelect<
       {selectedItems.length > 0 && (
         <div className="flex flex-wrap gap-2">
           {selectedItems.map((item) => (
-            <div
+            <Chip
               key={item.id}
-              className={cn(
-                "flex items-center gap-2 p-2 bg-background-tint-01 border rounded-08",
-                disabled && "opacity-50"
-              )}
-            >
-              <Text mainUiBody>{item.name}</Text>
-              {!disabled && (
-                <IconButton
-                  tertiary
-                  icon={SvgX}
-                  onClick={() => handleRemove(item.id)}
-                  tooltip="Remove"
-                />
-              )}
-            </div>
+              label={item.name}
+              disabled={disabled}
+              onRemove={() => handleRemove(item.id)}
+            />
           ))}
         </div>
       )}

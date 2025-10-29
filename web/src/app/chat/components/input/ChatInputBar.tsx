@@ -132,7 +132,6 @@ function ChatInputBarInner({
   setPresentingDocument,
 }: ChatInputBarProps) {
   const { user } = useUser();
-
   const { forcedToolIds, setForcedToolIds } = useAgentsContext();
   const { currentMessageFiles, setCurrentMessageFiles } = useProjectsContext();
 

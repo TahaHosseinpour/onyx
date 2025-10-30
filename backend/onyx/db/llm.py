@@ -413,7 +413,7 @@ def remove_embedding_provider(
 def remove_llm_provider(db_session: Session, provider_id: int) -> None:
     provider = db_session.get(LLMProviderModel, provider_id)
     if not provider:
-        return  # Provider doesn't exist, nothing to do
+        raise ValueError("LLM Provider not found")
 
     # Clear the provider override from any personas using it
     # This causes them to fall back to the default provider

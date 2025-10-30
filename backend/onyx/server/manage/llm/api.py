@@ -29,7 +29,6 @@ from onyx.db.llm import update_default_provider
 from onyx.db.llm import update_default_vision_provider
 from onyx.db.llm import upsert_llm_provider
 from onyx.db.llm import validate_persona_ids_exist
-from onyx.db.models import LLMProvider as LLMProviderModel
 from onyx.db.models import User
 from onyx.db.persona import user_can_access_persona
 from onyx.llm.factory import get_default_llms
@@ -297,11 +296,10 @@ def delete_llm_provider(
     _: User | None = Depends(current_admin_user),
     db_session: Session = Depends(get_session),
 ) -> None:
-    provider = db_session.get(LLMProviderModel, provider_id)
-    if not provider:
-        raise HTTPException(status_code=404, detail="LLM Provider not found")
-
-    remove_llm_provider(db_session, provider_id)
+    try:
+        remove_llm_provider(db_session, provider_id)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
 
 
 @admin_router.post("/provider/{provider_id}/default")

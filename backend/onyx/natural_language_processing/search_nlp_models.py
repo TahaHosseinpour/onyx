@@ -190,9 +190,16 @@ class CloudEmbedding:
         import openai
 
         # Use the OpenAI specific timeout for this one
-        client = openai.AsyncOpenAI(
-            api_key=self.api_key, timeout=OPENAI_EMBEDDING_TIMEOUT
-        )
+        # Support custom base_url for Metis AI or other OpenAI-compatible providers
+        client_params = {
+            "api_key": self.api_key,
+            "timeout": OPENAI_EMBEDDING_TIMEOUT
+        }
+
+        if self.api_url:
+            client_params["base_url"] = self.api_url
+
+        client = openai.AsyncOpenAI(**client_params)
 
         final_embeddings: list[Embedding] = []
 

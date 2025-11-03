@@ -48,13 +48,11 @@ services:
       uvicorn onyx.main:app --host 0.0.0.0 --port 8080"
     # Check env.template and copy to .env for env vars
     env_file:
-      - path: .env
-        required: false
+      - .env
     depends_on:
       - relational_db
       - index
       - cache
-      - inference_model_server
       - minio
     restart: unless-stopped
     # DEV: To expose ports, either:
@@ -68,7 +66,7 @@ services:
       - POSTGRES_HOST=${POSTGRES_HOST:-relational_db}
       - VESPA_HOST=${VESPA_HOST:-index}
       - REDIS_HOST=${REDIS_HOST:-cache}
-      - MODEL_SERVER_HOST=${MODEL_SERVER_HOST:-inference_model_server}
+      - DISABLE_MODEL_SERVER=True
       - S3_ENDPOINT_URL=${S3_ENDPOINT_URL:-http://minio:9000}
       - S3_AWS_ACCESS_KEY_ID=${S3_AWS_ACCESS_KEY_ID:-minioadmin}
       - S3_AWS_SECRET_ACCESS_KEY=${S3_AWS_SECRET_ACCESS_KEY:-minioadmin}
@@ -98,22 +96,18 @@ services:
       fi &&
       /app/scripts/supervisord_entrypoint.sh"
     env_file:
-      - path: .env
-        required: false
+      - .env
     depends_on:
       - relational_db
       - index
       - cache
-      - inference_model_server
-      - indexing_model_server
     restart: unless-stopped
     environment:
       - USE_LIGHTWEIGHT_BACKGROUND_WORKER=${USE_LIGHTWEIGHT_BACKGROUND_WORKER:-true}
       - POSTGRES_HOST=${POSTGRES_HOST:-relational_db}
       - VESPA_HOST=${VESPA_HOST:-index}
       - REDIS_HOST=${REDIS_HOST:-cache}
-      - MODEL_SERVER_HOST=${MODEL_SERVER_HOST:-inference_model_server}
-      - INDEXING_MODEL_SERVER_HOST=${INDEXING_MODEL_SERVER_HOST:-indexing_model_server}
+      - DISABLE_MODEL_SERVER=True
       - S3_ENDPOINT_URL=${S3_ENDPOINT_URL:-http://minio:9000}
       - S3_AWS_ACCESS_KEY_ID=${S3_AWS_ACCESS_KEY_ID:-minioadmin}
       - S3_AWS_SECRET_ACCESS_KEY=${S3_AWS_SECRET_ACCESS_KEY:-minioadmin}
@@ -157,95 +151,46 @@ services:
         - NEXT_PUBLIC_DO_NOT_USE_TOGGLE_OFF_DANSWER_POWERED=${NEXT_PUBLIC_DO_NOT_USE_TOGGLE_OFF_DANSWER_POWERED:-false}
         - NODE_OPTIONS=${NODE_OPTIONS:-"--max-old-space-size=4096"}
     env_file:
-      - path: .env
-        required: false
+      - .env
     depends_on:
       - api_server
     restart: unless-stopped
     environment:
       - INTERNAL_URL=${INTERNAL_URL:-http://api_server:8080}
 
-  inference_model_server:
-    image: onyxdotapp/onyx-model-server:${IMAGE_TAG:-latest}
-    build:
-      context: ../../backend
-      dockerfile: Dockerfile.model_server
-    # GPU Support: Uncomment the following lines to enable GPU support
-    # Requires nvidia-container-toolkit to be installed on the host
-    # deploy:
-    #   resources:
-    #     reservations:
-    #       devices:
-    #         - driver: nvidia
-    #           count: all
-    #           capabilities: [gpu]
-    command: >
-      /bin/sh -c "if [ \"${DISABLE_MODEL_SERVER:-false}\" = \"True\" ]; then
-        echo 'Skipping service...';
-        exit 0;
-      else
-        exec uvicorn model_server.main:app --host 0.0.0.0 --port 9000;
-      fi"
-    env_file:
-      - path: .env
-        required: false
-    restart: unless-stopped
-    volumes:
-      # Not necessary, this is just to reduce download time during startup
-      - model_cache_huggingface:/app/.cache/huggingface/
-      # Optional, only for debugging purposes
-      - inference_model_server_logs:/var/log/onyx
-    logging:
-      driver: json-file
-      options:
-        max-size: "50m"
-        max-file: "6"
+  # Model servers disabled - using cloud APIs instead
+  # inference_model_server:
+  #   image: onyxdotapp/onyx-model-server:${IMAGE_TAG:-latest}
+  #   build:
+  #     context: ../../backend
+  #     dockerfile: Dockerfile.model_server
+  #   command: >
+  #     /bin/sh -c "echo 'Model server disabled - using cloud APIs'; exit 0;"
+  #   env_file:
+  #     - path: .env
+  #       required: false
+  #   restart: "no"
 
-  indexing_model_server:
-    image: onyxdotapp/onyx-model-server:${IMAGE_TAG:-latest}
-    build:
-      context: ../../backend
-      dockerfile: Dockerfile.model_server
-    # GPU Support: Uncomment the following lines to enable GPU support
-    # Requires nvidia-container-toolkit to be installed on the host
-    # deploy:
-    #   resources:
-    #     reservations:
-    #       devices:
-    #         - driver: nvidia
-    #           count: all
-    #           capabilities: [gpu]
-    command: >
-      /bin/sh -c "if [ \"${DISABLE_MODEL_SERVER:-false}\" = \"True\" ]; then
-        echo 'Skipping service...';
-        exit 0;
-      else
-        exec uvicorn model_server.main:app --host 0.0.0.0 --port 9000;
-      fi"
-    env_file:
-      - path: .env
-        required: false
-    restart: unless-stopped
-    environment:
-      - INDEXING_ONLY=True
-    volumes:
-      # Not necessary, this is just to reduce download time during startup
-      - indexing_huggingface_model_cache:/app/.cache/huggingface/
-      # Optional, only for debugging purposes
-      - indexing_model_server_logs:/var/log/onyx
-    logging:
-      driver: json-file
-      options:
-        max-size: "50m"
-        max-file: "6"
+  # indexing_model_server:
+  #   image: onyxdotapp/onyx-model-server:${IMAGE_TAG:-latest}
+  #   build:
+  #     context: ../../backend
+  #     dockerfile: Dockerfile.model_server
+  #   command: >
+  #     /bin/sh -c "echo 'Model server disabled - using cloud APIs'; exit 0;"
+  #   env_file:
+  #     - path: .env
+  #       required: false
+  #   restart: "no"
+  #   environment:
+  #     - INDEXING_ONLY=True
 
   relational_db:
     image: postgres:15.2-alpine
     shm_size: 1g
     command: -c 'max_connections=250'
     env_file:
-      - path: .env
-        required: false
+      - .env
     restart: unless-stopped
     # PRODUCTION: Override the defaults by passing in the environment variables
     environment:
@@ -264,8 +209,7 @@ services:
     image: vespaengine/vespa:8.526.15
     restart: unless-stopped
     env_file:
-      - path: .env
-        required: false
+      - .env
     environment:
       - VESPA_SKIP_UPGRADE_CHECK=${VESPA_SKIP_UPGRADE_CHECK:-true}
     # DEV: To expose ports, either:
@@ -291,8 +235,7 @@ services:
       - api_server
       - web_server
     env_file:
-      - path: .env
-        required: false
+      - .env
     environment:
       - DOMAIN=localhost
       # Nginx proxy timeout settings (in seconds)
@@ -334,8 +277,7 @@ services:
     # persistence. explicitly setting save and appendonly forces ephemeral behavior.
     command: redis-server --save "" --appendonly no
     env_file:
-      - path: .env
-        required: false
+      - .env
     # Use tmpfs to prevent creation of anonymous volumes for /data
     tmpfs:
       - /data
@@ -350,8 +292,7 @@ services:
     #   - "9004:9000"
     #   - "9005:9001"
     env_file:
-      - path: .env
-        required: false
+      - .env
     environment:
       MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
       MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin}

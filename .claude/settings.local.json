@@ -3,7 +3,8 @@
     "allow": [
       "Bash(docker compose:*)",
       "Bash(git add:*)",
-      "Bash(git commit:*)"
+      "Bash(git commit:*)",
+      "Bash(timeout 5 docker compose:*)"
     ],
     "deny": [],
     "ask": []
